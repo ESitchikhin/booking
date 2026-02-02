@@ -1,4 +1,4 @@
-package websocket
+package handlers
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/gorilla/websocket"
+	"mts/booking_service/internal/ws/dto"
 )
 
 // MockStandUpdater - это мок для сервиса стендов.
@@ -44,19 +45,19 @@ func newTestWsClient(t *testing.T, serverURL string) *websocket.Conn {
 }
 
 func TestHub_ClientCommunication(t *testing.T) {
-	service := &MockStandUpdater{}
-	hub := NewHub()
-	hub.SetService(service)
-	go hub.Run()
-
-	server := httptest.NewServer(http.HandlerFunc(hub.ServeHTTP))
-	defer server.Close()
-
 	t.Run("получение начального состояния", func(t *testing.T) {
+		service := &MockStandUpdater{}
+		hub := NewHub()
+		hub.SetService(service)
+		go hub.Run()
+
+		server := httptest.NewServer(http.HandlerFunc(hub.ServeHTTP))
+		defer server.Close()
+
 		conn := newTestWsClient(t, server.URL)
 		defer conn.Close()
 
-		var receivedMsg WsMessage
+		var receivedMsg dto.WsMessage
 		err := conn.ReadJSON(&receivedMsg)
 		if err != nil {
 			t.Fatalf("Не удалось прочитать JSON сообщение: %v", err)
@@ -71,14 +72,23 @@ func TestHub_ClientCommunication(t *testing.T) {
 	})
 
 	t.Run("успешная обработка PATCH сообщения", func(t *testing.T) {
+		service := &MockStandUpdater{}
+		hub := NewHub()
+		hub.SetService(service)
+		go hub.Run()
+
+		server := httptest.NewServer(http.HandlerFunc(hub.ServeHTTP))
+		defer server.Close()
+
 		conn := newTestWsClient(t, server.URL)
 		defer conn.Close()
-		conn.ReadJSON(new(WsMessage)) // Пропускаем начальное сообщение
+		conn.ReadJSON(new(dto.WsMessage)) // Пропускаем начальное сообщение
 
 		var wg sync.WaitGroup
 		wg.Add(1)
 
 		service.UpdateStandFunc = func(ctx context.Context, id string, data []byte) error {
+			defer wg.Done()
 			if id != "stand1" {
 				t.Errorf("Ожидался id 'stand1', получено '%s'", id)
 			}
@@ -88,11 +98,11 @@ func TestHub_ClientCommunication(t *testing.T) {
 			return nil
 		}
 
-		patchPayload, _ := json.Marshal(PatchPayload{
+		patchPayload, _ := json.Marshal(dto.PatchPayload{
 			ID:         "stand1",
 			UpdateData: json.RawMessage(`{"status":"occupied"}`),
 		})
-		patchMsg := WsMessage{Type: "PATCH", Payload: patchPayload}
+		patchMsg := dto.WsMessage{Type: "PATCH", Payload: patchPayload}
 
 		if err := conn.WriteJSON(patchMsg); err != nil {
 			t.Fatalf("Не удалось отправить JSON сообщение: %v", err)
@@ -102,16 +112,24 @@ func TestHub_ClientCommunication(t *testing.T) {
 	})
 
 	t.Run("обработка неизвестного типа сообщения", func(t *testing.T) {
+		service := &MockStandUpdater{}
+		hub := NewHub()
+		hub.SetService(service)
+		go hub.Run()
+
+		server := httptest.NewServer(http.HandlerFunc(hub.ServeHTTP))
+		defer server.Close()
+
 		conn := newTestWsClient(t, server.URL)
 		defer conn.Close()
-		conn.ReadJSON(new(WsMessage)) // Пропускаем начальное сообщение
+		conn.ReadJSON(new(dto.WsMessage)) // Пропускаем начальное сообщение
 
-		unknownMsg := WsMessage{Type: "UNKNOWN", Payload: []byte(`{}`)}
+		unknownMsg := dto.WsMessage{Type: "UNKNOWN", Payload: []byte(`{}`)}
 		if err := conn.WriteJSON(unknownMsg); err != nil {
 			t.Fatalf("Не удалось отправить JSON сообщение: %v", err)
 		}
 
-		var errRsp WsMessage
+		var errRsp dto.WsMessage
 		conn.ReadJSON(&errRsp)
 		if errRsp.Type != "ERROR" {
 			t.Errorf("Ожидался тип 'ERROR', получено '%s'", errRsp.Type)
@@ -119,19 +137,27 @@ func TestHub_ClientCommunication(t *testing.T) {
 	})
 
 	t.Run("обработка ошибки от сервиса", func(t *testing.T) {
+		service := &MockStandUpdater{}
+		hub := NewHub()
+		hub.SetService(service)
+		go hub.Run()
+
+		server := httptest.NewServer(http.HandlerFunc(hub.ServeHTTP))
+		defer server.Close()
+
 		conn := newTestWsClient(t, server.URL)
 		defer conn.Close()
-		conn.ReadJSON(new(WsMessage)) // Пропускаем начальное сообщение
+		conn.ReadJSON(new(dto.WsMessage)) // Пропускаем начальное сообщение
 
 		service.UpdateStandFunc = func(ctx context.Context, id string, data []byte) error {
 			return errors.New("service error")
 		}
 
-		patchPayload, _ := json.Marshal(PatchPayload{ID: "stand1"})
-		patchMsg := WsMessage{Type: "PATCH", Payload: patchPayload}
+		patchPayload, _ := json.Marshal(dto.PatchPayload{ID: "stand1"})
+		patchMsg := dto.WsMessage{Type: "PATCH", Payload: patchPayload}
 		conn.WriteJSON(patchMsg)
 
-		var errRsp WsMessage
+		var errRsp dto.WsMessage
 		conn.ReadJSON(&errRsp)
 		if errRsp.Type != "ERROR" {
 			t.Errorf("Ожидался тип 'ERROR', получено '%s'", errRsp.Type)

@@ -1,4 +1,4 @@
-package websocket
+package handlers
 
 import (
 	"context"
@@ -8,29 +8,13 @@ import (
 	"sync"
 
 	"github.com/gorilla/websocket"
+	"mts/booking_service/internal/ws/dto"
 )
 
 // StandUpdater определяет интерфейс для сервиса стендов.
 type StandUpdater interface {
 	UpdateStand(ctx context.Context, id string, data []byte) error
 	GetInitialStands(ctx context.Context) ([]byte, error)
-}
-
-// WsMessage - это общая структура для всех WebSocket сообщений.
-type WsMessage struct {
-	Type    string          `json:"type"`
-	Payload json.RawMessage `json:"payload"`
-}
-
-// PatchPayload - это структура для payload'а PATCH сообщения.
-type PatchPayload struct {
-	ID         string          `json:"id"`
-	UpdateData json.RawMessage `json:"updateData"`
-}
-
-// ErrorPayload - это структура для payload'а ERROR сообщения.
-type ErrorPayload struct {
-	Message string `json:"message"`
 }
 
 var upgrader = websocket.Upgrader{
@@ -87,7 +71,7 @@ func (h *Hub) Run() {
 		case message := <-h.broadcast:
 			h.mu.Lock()
 			for conn := range h.clients {
-				updateMsg := WsMessage{
+				updateMsg := dto.WsMessage{
 					Type:    "UPDATE",
 					Payload: message,
 				}
@@ -109,7 +93,7 @@ func (h *Hub) sendInitialStands(conn *websocket.Conn) {
 		return
 	}
 
-	updateMsg := WsMessage{
+	updateMsg := dto.WsMessage{
 		Type:    "UPDATE",
 		Payload: initialStands,
 	}
@@ -140,7 +124,7 @@ func (h *Hub) handleClientMessages(conn *websocket.Conn) {
 	}()
 
 	for {
-		var msg WsMessage
+		var msg dto.WsMessage
 		if err := conn.ReadJSON(&msg); err != nil {
 			log.Printf("Ошибка чтения JSON сообщения: %v", err)
 			h.sendError(conn, "Некорректный формат сообщения.")
@@ -159,7 +143,7 @@ func (h *Hub) handleClientMessages(conn *websocket.Conn) {
 }
 
 func (h *Hub) handlePatch(conn *websocket.Conn, payload json.RawMessage) {
-	var patchPayload PatchPayload
+	var patchPayload dto.PatchPayload
 	if err := json.Unmarshal(payload, &patchPayload); err != nil {
 		log.Printf("Ошибка парсинга PATCH payload: %v", err)
 		h.sendError(conn, "Некорректный payload для PATCH сообщения.")
@@ -174,9 +158,9 @@ func (h *Hub) handlePatch(conn *websocket.Conn, payload json.RawMessage) {
 }
 
 func (h *Hub) sendError(conn *websocket.Conn, message string) {
-	errorPayload := ErrorPayload{Message: message}
+	errorPayload := dto.ErrorPayload{Message: message}
 	payloadBytes, _ := json.Marshal(errorPayload)
-	errorMsg := WsMessage{
+	errorMsg := dto.WsMessage{
 		Type:    "ERROR",
 		Payload: payloadBytes,
 	}

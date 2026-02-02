@@ -8,28 +8,17 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
-
-	"mts/booking_service/internal/config"
-	"mts/booking_service/internal/repository/supabase"
-	"mts/booking_service/internal/services/standservice"
-	"mts/booking_service/internal/ws/handlers"
 )
 
-func Run(configPath string) {
-	cfg, err := config.NewConfig(configPath)
-	if err != nil {
-		log.Fatalf("Ошибка при загрузке конфигурации: %v", err)
-	}
+// Server представляет HTTP-сервер.
+type Server struct {
+	httpServer *http.Server
+}
 
-	standsRepo := supabase.NewStandsRepository(&cfg.Supabase)
-	hub := handlers.NewHub()
-	standSvc := standservice.NewStandService(standsRepo, hub)
-	hub.SetService(standSvc)
-	go hub.Run()
-
+// New создает новый экземпляр Server.
+func New(addr string, wsHandler, standsHandler http.Handler) *Server {
 	mux := http.NewServeMux()
-	mux.Handle("/ws", hub)
-	standsHandler := handlers.NewStandsHandler(standsRepo)
+	mux.Handle("/ws", wsHandler)
 	mux.Handle("/stands", standsHandler)
 	mux.HandleFunc("/healthcheck", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -37,14 +26,19 @@ func Run(configPath string) {
 		_, _ = w.Write([]byte(`{"success": true}`))
 	})
 
-	srv := &http.Server{
-		Addr:    ":" + cfg.Server.Port,
-		Handler: mux,
+	return &Server{
+		httpServer: &http.Server{
+			Addr:    addr,
+			Handler: mux,
+		},
 	}
+}
 
+// Run запускает сервер и настраивает graceful shutdown.
+func (s *Server) Run() {
 	go func() {
-		log.Printf("Сервер запускается на порту %s", cfg.Server.Port)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Printf("Сервер запускается на %s", s.httpServer.Addr)
+		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Ошибка при запуске сервера: %v", err)
 		}
 	}()
@@ -57,8 +51,8 @@ func Run(configPath string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := srv.Shutdown(ctx); err != nil {
-		log.Fatalf("Ошибка при остановке сервера: %v", err)
+	if err := s.httpServer.Shutdown(ctx); err != nil {
+		log.Fatalf("Ошибка при graceful shutdown сервера: %v", err)
 	}
 
 	log.Println("Сервер успешно остановлен.")

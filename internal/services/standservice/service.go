@@ -2,8 +2,15 @@ package standservice
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 )
+
+// PatchMessage определяет структуру для частичного обновления.
+type PatchMessage struct {
+	ID         string          `json:"id"`
+	UpdateData json.RawMessage `json:"updateData"`
+}
 
 // Repository определяет интерфейс для работы с хранилищем стендов.
 type Repository interface {
@@ -12,7 +19,6 @@ type Repository interface {
 }
 
 // Notifier определяет интерфейс для отправки уведомлений.
-// Это позволяет отделить сервис от конкретной реализации транспорта (WebSocket).
 type Notifier interface {
 	Broadcast(message []byte)
 }
@@ -32,10 +38,12 @@ func NewStandService(repo Repository, notifier Notifier) *StandService {
 }
 
 // UpdateAndNotify обновляет данные о стендах и уведомляет клиентов.
-// Этот метод является основной точкой входа для бизнес-логики.
 func (s *StandService) UpdateAndNotify(ctx context.Context, updateData []byte) error {
-	id := s.getIdFromUpdateData(updateData)
-	standData := s.getStandDataFromUpdateData(updateData)
+	id, standData, err := s.parseUpdateData(updateData)
+	if err != nil {
+		log.Printf("Ошибка парсинга данных для обновления: %v", err)
+		return err
+	}
 
 	// 1. Обновить данные в репозитории (Supabase).
 	if err := s.repo.UpdateStands(ctx, id, standData); err != nil {
@@ -65,12 +73,11 @@ func (s *StandService) GetInitialStands(ctx context.Context) ([]byte, error) {
 	return s.repo.GetStands(ctx)
 }
 
-// todo: нужно реализовать
-func (s *StandService) getIdFromUpdateData(updateData []byte) string {
-	return "id"
-}
-
-// todo: нужно реализовать
-func (s *StandService) getStandDataFromUpdateData(updateData []byte) []byte {
-	return updateData
+// parseUpdateData извлекает id и данные для обновления из входящего сообщения.
+func (s *StandService) parseUpdateData(updateData []byte) (string, []byte, error) {
+	var msg PatchMessage
+	if err := json.Unmarshal(updateData, &msg); err != nil {
+		return "", nil, err
+	}
+	return msg.ID, msg.UpdateData, nil
 }

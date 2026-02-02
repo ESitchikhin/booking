@@ -7,7 +7,7 @@ import (
 
 // Repository определяет интерфейс для работы с хранилищем стендов.
 type Repository interface {
-	UpdateStands(ctx context.Context, standsData []byte) error
+	UpdateStands(ctx context.Context, id string, standsData []byte) error
 	GetStands(ctx context.Context) ([]byte, error)
 }
 
@@ -33,9 +33,12 @@ func NewStandService(repo Repository, notifier Notifier) *StandService {
 
 // UpdateAndNotify обновляет данные о стендах и уведомляет клиентов.
 // Этот метод является основной точкой входа для бизнес-логики.
-func (s *StandService) UpdateAndNotify(ctx context.Context, standsData []byte) error {
+func (s *StandService) UpdateAndNotify(ctx context.Context, updateData []byte) error {
+	id := s.getIdFromUpdateData(updateData)
+	standData := s.getStandDataFromUpdateData(updateData)
+
 	// 1. Обновить данные в репозитории (Supabase).
-	if err := s.repo.UpdateStands(ctx, standsData); err != nil {
+	if err := s.repo.UpdateStands(ctx, id, standData); err != nil {
 		log.Printf("Ошибка обновления стендов в репозитории: %v", err)
 		return err
 	}
@@ -60,4 +63,14 @@ func (s *StandService) UpdateAndNotify(ctx context.Context, standsData []byte) e
 // GetInitialStands возвращает начальное состояние стендов для нового клиента.
 func (s *StandService) GetInitialStands(ctx context.Context) ([]byte, error) {
 	return s.repo.GetStands(ctx)
+}
+
+// todo: нужно реализовать
+func (s *StandService) getIdFromUpdateData(updateData []byte) string {
+	return "id"
+}
+
+// todo: нужно реализовать
+func (s *StandService) getStandDataFromUpdateData(updateData []byte) []byte {
+	return updateData
 }

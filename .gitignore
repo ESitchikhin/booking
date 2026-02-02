@@ -14,7 +14,7 @@ configs/*
 !configs/e2etests.yml
 storage/
 
-pkg/AGENTS.md
-pkg/GEMINI.md
+AGENTS.md
+GEMINI.md
 
 ai-team/

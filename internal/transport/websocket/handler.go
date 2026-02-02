@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"net/http"
 	"sync"
@@ -9,18 +10,31 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// StandUpdater определяет интерфейс для обновления данных о стендах.
+// StandUpdater определяет интерфейс для сервиса стендов.
 type StandUpdater interface {
-	UpdateAndNotify(ctx context.Context, standsData []byte) error
+	UpdateStand(ctx context.Context, id string, data []byte) error
 	GetInitialStands(ctx context.Context) ([]byte, error)
 }
 
-// upgrader настраивает параметры для обновления HTTP-соединения до WebSocket.
+// WsMessage - это общая структура для всех WebSocket сообщений.
+type WsMessage struct {
+	Type    string          `json:"type"`
+	Payload json.RawMessage `json:"payload"`
+}
+
+// PatchPayload - это структура для payload'а PATCH сообщения.
+type PatchPayload struct {
+	ID         string          `json:"id"`
+	UpdateData json.RawMessage `json:"updateData"`
+}
+
+// ErrorPayload - это структура для payload'а ERROR сообщения.
+type ErrorPayload struct {
+	Message string `json:"message"`
+}
+
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		// В проде здесь должна быть проверка на разрешенные домены.
-		return true
-	},
+	CheckOrigin:     func(r *http.Request) bool { return true },
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 }
@@ -59,15 +73,7 @@ func (h *Hub) Run() {
 			h.clients[conn] = true
 			h.mu.Unlock()
 			log.Println("Новый клиент подключен.")
-			// Отправляем новому клиенту актуальное состояние
-			initialStands, err := h.service.GetInitialStands(context.Background())
-			if err != nil {
-				log.Printf("Ошибка получения начального состояния стендов: %v", err)
-			} else {
-				if err := conn.WriteMessage(websocket.TextMessage, initialStands); err != nil {
-					log.Printf("Ошибка отправки начального состояния клиенту: %v", err)
-				}
-			}
+			h.sendInitialStands(conn)
 
 		case conn := <-h.unregister:
 			h.mu.Lock()
@@ -81,13 +87,34 @@ func (h *Hub) Run() {
 		case message := <-h.broadcast:
 			h.mu.Lock()
 			for conn := range h.clients {
-				if err := conn.WriteMessage(websocket.TextMessage, message); err != nil {
+				updateMsg := WsMessage{
+					Type:    "UPDATE",
+					Payload: message,
+				}
+				if err := conn.WriteJSON(updateMsg); err != nil {
 					log.Printf("Ошибка отправки сообщения клиенту: %v", err)
 				}
 			}
 			h.mu.Unlock()
-			log.Println("Сообщение разослано всем клиентам.")
+			log.Println("Сообщение 'UPDATE' разослано всем клиентам.")
 		}
+	}
+}
+
+func (h *Hub) sendInitialStands(conn *websocket.Conn) {
+	initialStands, err := h.service.GetInitialStands(context.Background())
+	if err != nil {
+		log.Printf("Ошибка получения начального состояния стендов: %v", err)
+		h.sendError(conn, "Не удалось получить начальное состояние стендов.")
+		return
+	}
+
+	updateMsg := WsMessage{
+		Type:    "UPDATE",
+		Payload: initialStands,
+	}
+	if err := conn.WriteJSON(updateMsg); err != nil {
+		log.Printf("Ошибка отправки начального состояния клиенту: %v", err)
 	}
 }
 
@@ -103,38 +130,57 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Ошибка обновления до WebSocket: %v", err)
 		return
 	}
-
 	h.register <- conn
-
-	// Горутина для чтения сообщений от данного клиента
 	go h.handleClientMessages(conn)
 }
 
-// handleClientMessages читает сообщения от клиента и передает их в сервис.
 func (h *Hub) handleClientMessages(conn *websocket.Conn) {
 	defer func() {
 		h.unregister <- conn
 	}()
 
 	for {
-		messageType, p, err := conn.ReadMessage()
-		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("Неожиданная ошибка закрытия соединения: %v", err)
-			}
+		var msg WsMessage
+		if err := conn.ReadJSON(&msg); err != nil {
+			log.Printf("Ошибка чтения JSON сообщения: %v", err)
+			h.sendError(conn, "Некорректный формат сообщения.")
+			// В случае ошибки чтения, соединение, вероятно, невалидно, поэтому выходим из цикла.
 			break
 		}
 
-		if messageType == websocket.TextMessage {
-			// Передаем полученные данные в сервис для обработки
-			if err := h.service.UpdateAndNotify(context.Background(), p); err != nil {
-				log.Printf("Ошибка при обработке сообщения от клиента: %v", err)
-				// Опционально: отправить клиенту сообщение об ошибке
-				errorMsg := []byte(`{"error": "Не удалось обновить данные."}`)
-				if writeErr := conn.WriteMessage(websocket.TextMessage, errorMsg); writeErr != nil {
-					log.Printf("Ошибка отправки сообщения об ошибке клиенту: %v", writeErr)
-				}
-			}
+		switch msg.Type {
+		case "PATCH":
+			h.handlePatch(conn, msg.Payload)
+		default:
+			log.Printf("Получен неизвестный тип сообщения: %s", msg.Type)
+			h.sendError(conn, "Неизвестный тип сообщения.")
 		}
+	}
+}
+
+func (h *Hub) handlePatch(conn *websocket.Conn, payload json.RawMessage) {
+	var patchPayload PatchPayload
+	if err := json.Unmarshal(payload, &patchPayload); err != nil {
+		log.Printf("Ошибка парсинга PATCH payload: %v", err)
+		h.sendError(conn, "Некорректный payload для PATCH сообщения.")
+		return
+	}
+
+	if err := h.service.UpdateStand(context.Background(), patchPayload.ID, patchPayload.UpdateData); err != nil {
+		log.Printf("Ошибка при обработке PATCH сообщения от клиента: %v", err)
+		h.sendError(conn, "Не удалось обновить данные.")
+		return
+	}
+}
+
+func (h *Hub) sendError(conn *websocket.Conn, message string) {
+	errorPayload := ErrorPayload{Message: message}
+	payloadBytes, _ := json.Marshal(errorPayload)
+	errorMsg := WsMessage{
+		Type:    "ERROR",
+		Payload: payloadBytes,
+	}
+	if err := conn.WriteJSON(errorMsg); err != nil {
+		log.Printf("Ошибка отправки сообщения об ошибке клиенту: %v", err)
 	}
 }

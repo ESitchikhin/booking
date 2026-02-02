@@ -8,13 +8,13 @@ import (
 
 // MockRepository - это мок для репозитория.
 type MockRepository struct {
-	UpdateStandsFunc func(ctx context.Context, id string, data []byte) error
-	GetStandsFunc    func(ctx context.Context) ([]byte, error)
+	PatchFunc     func(ctx context.Context, id string, data []byte) error
+	GetStandsFunc func(ctx context.Context) ([]byte, error)
 }
 
-func (m *MockRepository) UpdateStands(ctx context.Context, id string, data []byte) error {
-	if m.UpdateStandsFunc != nil {
-		return m.UpdateStandsFunc(ctx, id, data)
+func (m *MockRepository) Patch(ctx context.Context, id string, data []byte) error {
+	if m.PatchFunc != nil {
+		return m.PatchFunc(ctx, id, data)
 	}
 	return nil
 }
@@ -41,7 +41,7 @@ func (m *MockNotifier) Broadcast(message []byte) {
 	}
 }
 
-func TestStandService_UpdateAndNotify(t *testing.T) {
+func TestStandService_UpdateStand(t *testing.T) {
 	t.Run("успешное обновление и уведомление", func(t *testing.T) {
 		repo := &MockRepository{
 			GetStandsFunc: func(ctx context.Context) ([]byte, error) {
@@ -51,8 +51,7 @@ func TestStandService_UpdateAndNotify(t *testing.T) {
 		notifier := &MockNotifier{}
 		service := NewStandService(repo, notifier)
 
-		patchMsg := `{"id": "stand1", "updateData": {"status": "occupied"}}`
-		err := service.UpdateAndNotify(context.Background(), []byte(patchMsg))
+		err := service.UpdateStand(context.Background(), "stand1", []byte(`{"status": "occupied"}`))
 
 		if err != nil {
 			t.Errorf("Ожидалась ошибка nil, получено %v", err)
@@ -67,29 +66,16 @@ func TestStandService_UpdateAndNotify(t *testing.T) {
 		}
 	})
 
-	t.Run("ошибка парсинга", func(t *testing.T) {
-		repo := &MockRepository{}
-		notifier := &MockNotifier{}
-		service := NewStandService(repo, notifier)
-
-		err := service.UpdateAndNotify(context.Background(), []byte("invalid json"))
-
-		if err == nil {
-			t.Error("Ожидалась ошибка парсинга, но получено nil")
-		}
-	})
-
 	t.Run("ошибка при обновлении в репозитории", func(t *testing.T) {
 		repo := &MockRepository{
-			UpdateStandsFunc: func(ctx context.Context, id string, data []byte) error {
+			PatchFunc: func(ctx context.Context, id string, data []byte) error {
 				return errors.New("repo update error")
 			},
 		}
 		notifier := &MockNotifier{}
 		service := NewStandService(repo, notifier)
 
-		patchMsg := `{"id": "stand1", "updateData": {"status": "occupied"}}`
-		err := service.UpdateAndNotify(context.Background(), []byte(patchMsg))
+		err := service.UpdateStand(context.Background(), "stand1", []byte(`{"status": "occupied"}`))
 
 		if err == nil {
 			t.Error("Ожидалась ошибка, но получено nil")

@@ -42,6 +42,14 @@ func Run(configPath string) {
 	// 3. Настройка HTTP-сервера и роутинга
 	mux := http.NewServeMux()
 	mux.Handle("/ws", hub)
+	mux.HandleFunc("/healthcheck", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, err := w.Write([]byte(`{"success": true}`))
+		if err != nil {
+			log.Printf("Ошибка записи ответа healthcheck: %v", err)
+		}
+	})
 
 	server := &http.Server{
 		Addr:    ":" + cfg.Server.Port,

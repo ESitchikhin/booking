@@ -24,8 +24,8 @@ func NewStandsRepository(cfg *config.SupabaseConfig) *StandsRepository {
 	}
 }
 
-// UpdateStands обновляет данные о стендах в Supabase.
-func (r *StandsRepository) UpdateStands(ctx context.Context, id string, data []byte) error {
+// Patch обновляет данные о стенде в Supabase.
+func (r *StandsRepository) Patch(ctx context.Context, id string, data []byte) error {
 	reqURL := fmt.Sprintf("%s/rest/v1/stands?id=%s", r.cfg.URL, id)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, reqURL, bytes.NewBuffer(data))
